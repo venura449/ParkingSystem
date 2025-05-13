@@ -2,8 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import ParkingSlot from './parkingslot';
 
 // ThingSpeak API configuration
-const THINGSPEAK_API_KEY = 'U7IAR5I3VYW88UCJ';
-const THINGSPEAK_API_URL = 'https://api.thingspeak.com/update';
+const THINGSPEAK_WRITE_API_KEY = 'U7IAR5I3VYW88UCJ';
+const THINGSPEAK_READ_API_KEY = 'OF2Q21QN289QG34M';
+const THINGSPEAK_CHANNEL_ID = '2959501';
+const THINGSPEAK_UPDATE_URL = 'https://api.thingspeak.com/update';
+const THINGSPEAK_FEEDS_URL = `https://api.thingspeak.com/channels/${THINGSPEAK_CHANNEL_ID}/feeds.json`;
+const THINGSPEAK_FIELDS_URL = `https://api.thingspeak.com/channels/${THINGSPEAK_CHANNEL_ID}/fields`;
+const THINGSPEAK_STATUS_URL = `https://api.thingspeak.com/channels/${THINGSPEAK_CHANNEL_ID}/status.json`;
 
 const ParkingLot = () => {
   // Initialize state for 3 parking slots
@@ -13,20 +18,34 @@ const ParkingLot = () => {
     { id: 3, isReserved: false, reservationEndTime: null }
   ]);
 
-  // Timer reference for updating countdown
+  // State for ThingSpeak data
+  const [thingSpeakData, setThingSpeakData] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Timer references
   const timerRef = useRef(null);
+  const thingSpeakTimerRef = useRef(null);
 
   // Function to send data to ThingSpeak for a specific slot
   const sendSlotStatusToThingSpeak = async (slotId, value) => {
     try {
       // Map slot ID to the corresponding ThingSpeak field
       const fieldName = `field${slotId}`;
-      const url = `${THINGSPEAK_API_URL}?api_key=${THINGSPEAK_API_KEY}&${fieldName}=${value}`;
+      const url = `${THINGSPEAK_UPDATE_URL}?api_key=${THINGSPEAK_WRITE_API_KEY}&${fieldName}=${value}`;
       const response = await fetch(url);
       const data = await response.json();
       console.log(`ThingSpeak response for Slot ${slotId}:`, data);
+
+      // Update last updated timestamp
+      setLastUpdated(new Date());
+
+      // Fetch updated data after sending
+      fetchThingSpeakData();
     } catch (error) {
       console.error(`Error sending data to ThingSpeak for Slot ${slotId}:`, error);
+      setError(`Failed to update slot ${slotId}`);
     }
   };
 
@@ -34,12 +53,89 @@ const ParkingLot = () => {
   const sendAllSlotsStatusToThingSpeak = async (value) => {
     try {
       // Create URL with all three fields
-      const url = `${THINGSPEAK_API_URL}?api_key=${THINGSPEAK_API_KEY}&field1=${value}&field2=${value}&field3=${value}`;
+      const url = `${THINGSPEAK_UPDATE_URL}?api_key=${THINGSPEAK_WRITE_API_KEY}&field1=${value}&field2=${value}&field3=${value}`;
       const response = await fetch(url);
       const data = await response.json();
       console.log('ThingSpeak response for all slots:', data);
+
+      // Update last updated timestamp
+      setLastUpdated(new Date());
+
+      // Fetch updated data after sending
+      fetchThingSpeakData();
     } catch (error) {
       console.error('Error sending data to ThingSpeak for all slots:', error);
+      setError('Failed to update all slots');
+    }
+  };
+
+  // Function to fetch data from ThingSpeak
+  const fetchThingSpeakData = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Fetch channel feeds
+      const url = `${THINGSPEAK_FEEDS_URL}?api_key=${THINGSPEAK_READ_API_KEY}&results=2`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      console.log('ThingSpeak feed data:', data);
+      setThingSpeakData(data);
+      setLastUpdated(new Date());
+
+      // Update local state based on ThingSpeak data
+      if (data && data.feeds && data.feeds.length > 0) {
+        const latestFeed = data.feeds[data.feeds.length - 1];
+
+        // Update slots based on ThingSpeak data
+        const updatedSlots = slots.map(slot => {
+          const fieldValue = latestFeed[`field${slot.id}`];
+          const isReserved = fieldValue && parseInt(fieldValue) > 0;
+
+          // Only update if the state is different
+          if (isReserved !== slot.isReserved) {
+            // If newly reserved, set a default reservation time
+            let reservationEndTime = slot.reservationEndTime;
+            if (isReserved && !slot.isReserved) {
+              reservationEndTime = new Date();
+              reservationEndTime.setMinutes(reservationEndTime.getMinutes() + 30); // Default 30 minutes
+            } else if (!isReserved) {
+              reservationEndTime = null;
+            }
+
+            return {
+              ...slot,
+              isReserved,
+              reservationEndTime
+            };
+          }
+
+          return slot;
+        });
+
+        setSlots(updatedSlots);
+      }
+    } catch (error) {
+      console.error('Error fetching ThingSpeak data:', error);
+      setError('Failed to fetch data from ThingSpeak');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to fetch channel status
+  const fetchChannelStatus = async () => {
+    try {
+      const url = `${THINGSPEAK_STATUS_URL}?api_key=${THINGSPEAK_READ_API_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      console.log('ThingSpeak channel status:', data);
+      return data;
+    } catch (error) {
+      console.error('Error fetching ThingSpeak channel status:', error);
+      setError('Failed to fetch channel status');
+      return null;
     }
   };
 
@@ -108,6 +204,23 @@ const ParkingLot = () => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Set up timer to fetch ThingSpeak data periodically
+  useEffect(() => {
+    // Fetch data immediately on component mount
+    fetchThingSpeakData();
+
+    // Then set up interval to fetch data every 15 seconds
+    thingSpeakTimerRef.current = setInterval(() => {
+      fetchThingSpeakData();
+    }, 15000); // 15 seconds
+
+    return () => {
+      if (thingSpeakTimerRef.current) {
+        clearInterval(thingSpeakTimerRef.current);
       }
     };
   }, []);
@@ -224,10 +337,90 @@ const ParkingLot = () => {
                     <div className="w-2.5 h-2.5 md:w-3 md:h-3 bg-green-500 rounded-full mr-3 animate-pulse"></div>
                     <span className="text-sm md:text-base">Online</span>
                   </div>
-                  <div className="flex items-center">
+                  <div className="flex items-center mb-3">
                     <div className="w-2.5 h-2.5 md:w-3 md:h-3 bg-blue-500 rounded-full mr-3"></div>
-                    <span className="text-xs md:text-sm">Last updated: {new Date().toLocaleTimeString()}</span>
+                    <span className="text-xs md:text-sm">
+                      Last updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
+                    </span>
                   </div>
+                  <button
+                    className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-3 text-sm rounded-lg transition-all transform hover:scale-105 flex items-center justify-center"
+                    onClick={fetchThingSpeakData}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? (
+                      <>
+                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Refreshing...
+                      </>
+                    ) : (
+                      <>Refresh Data</>
+                    )}
+                  </button>
+                  {error && (
+                    <div className="mt-3 text-xs text-red-400">
+                      {error}
+                    </div>
+                  )}
+                </div>
+
+                {/* ThingSpeak Data */}
+                <div className="bg-gray-700 p-4 md:p-6 rounded-lg md:rounded-xl border-l-4 border-yellow-500 transform transition-all hover:scale-[1.02]">
+                  <h3 className="text-lg md:text-xl font-medium mb-3">ThingSpeak Channel</h3>
+
+                  {thingSpeakData && thingSpeakData.feeds && thingSpeakData.feeds.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="text-xs md:text-sm">
+                        <p className="text-gray-300 mb-1">Channel: {thingSpeakData.channel?.name || 'Parking System'}</p>
+                        <p className="text-gray-300 mb-1">Last Entry: {new Date(thingSpeakData.feeds[thingSpeakData.feeds.length - 1].created_at).toLocaleString()}</p>
+                      </div>
+
+                      <div className="bg-gray-800 p-3 rounded-lg">
+                        <h4 className="text-sm font-medium mb-2 text-yellow-300">Current Slot Values</h4>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[1, 2, 3].map(slotId => {
+                            const latestFeed = thingSpeakData.feeds[thingSpeakData.feeds.length - 1];
+                            const value = latestFeed[`field${slotId}`];
+                            const isReserved = value && parseInt(value) > 0;
+                            const status = isReserved ? 'Reserved' : 'Available';
+                            const statusColor = isReserved ? 'text-purple-300' : 'text-green-300';
+
+                            return (
+                              <div key={slotId} className="text-center p-2 bg-gray-900 rounded">
+                                <div className="text-xs font-medium">Slot #{slotId}</div>
+                                <div className={`text-sm font-bold ${statusColor}`}>{status}</div>
+                                <div className="text-xs text-gray-400">Value: {value || '0'}</div>
+                                {isReserved && (
+                                  <button
+                                    className="mt-2 w-full bg-red-600 hover:bg-red-700 text-white py-1 px-2 text-xs rounded transition-all transform hover:scale-105"
+                                    onClick={() => handleCancel(slotId)}
+                                  >
+                                    Release
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 bg-gray-800 p-3 rounded-lg">
+                        <h4 className="text-sm font-medium mb-2 text-yellow-300">Channel Information</h4>
+                        <div className="text-xs text-gray-300">
+                          <p>Channel ID: {thingSpeakData.channel?.id || THINGSPEAK_CHANNEL_ID}</p>
+                          <p>Total Entries: {thingSpeakData.channel?.last_entry_id || 'Unknown'}</p>
+                          <p>Created: {thingSpeakData.channel?.created_at ? new Date(thingSpeakData.channel.created_at).toLocaleDateString() : 'Unknown'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-400">
+                      {isLoading ? 'Loading ThingSpeak data...' : 'No ThingSpeak data available'}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
