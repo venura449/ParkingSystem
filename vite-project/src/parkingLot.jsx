@@ -226,12 +226,11 @@ const ParkingLot = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white font-sans w-full">
+    <div className="text-white font-sans w-full">
       <div className="max-w-full mx-auto px-4 sm:px-6 md:px-8 py-6 sm:py-8 md:py-10">
-        {/* Header with futuristic styling */}
         <header className="mb-8 md:mb-12 text-center">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-3 md:mb-5 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-600">
-            Quantum Parking System
+            Parking Lot Management
           </h1>
           <p className="text-sm sm:text-base md:text-xl text-gray-300">Advanced slot management with real-time monitoring</p>
         </header>
@@ -426,12 +425,6 @@ const ParkingLot = () => {
             </div>
           </div>
         </div>
-
-        {/* Footer */}
-        <footer className="mt-8 md:mt-12 text-center text-gray-400 py-4">
-          <p className="text-xs md:text-sm">© {new Date().getFullYear()} Quantum Parking Systems</p>
-          <p className="text-xs mt-2">Powered by React & Tailwind CSS</p>
-        </footer>
       </div>
     </div>
   );
